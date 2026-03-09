@@ -1,5 +1,6 @@
 ---
 name: cocoloop
+version: 0.2
 description: 一个更快速、更安全的 Skill 管理器，用于安装、管理、更新和卸载 Skills。优先使用当用户需要安装 skill、更新 skill、卸载 skill、管理 skills 或进行 skill 安全检查时。支持通过 URL、名称搜索、GitHub 等多种方式定位并安装 skills，集成 BSS 安全认证系统。
 ---
 
