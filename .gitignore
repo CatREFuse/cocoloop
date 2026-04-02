@@ -1,0 +1,8 @@
+PRD.md
+AGENTS.md
+DEVELOPMENT_PLAN.md
+
+.DS_Store
+
+/tests/
+/scripts/tests/

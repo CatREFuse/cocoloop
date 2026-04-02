@@ -1,245 +1,377 @@
 # Skill 安装流程详细指南
 
-本文档详细描述单个 skill 的安装流程，包括所有分支逻辑和异常处理。
+这份文档描述 Cocoloop 在“拿到文件之前”和“拿到文件之后”分别怎么做。当前版本里，CLI 只负责已知安装流程 wrapper；搜索判断、fallback 和开放式探索由 Agent 负责。
 
-## 流程图
+当前默认安装策略：
 
-```
+1. 真实 skill 内容先写入 `~/.cocoloop/skills/<skill-name>/`
+2. 再把目标平台目录发布成软链接
+3. 只有当前平台确实不支持软链接时，才退回复制
+4. 如果来源里存在多个 skill，先返回候选列表；只有用户或 Agent 明确指定后才继续安装
+
+## 总流程
+
+```text
 开始
   ↓
-接收用户输入 (URL / 名称 / GitHub短链)
+识别输入类型
+  ├── 直接文件 / URL
+  ├── skill 名称
+  ├── GitHub 链接 / 短链
+  └── 平台页面 / 文章页
   ↓
-检测运行平台
+检测当前 Agent 平台
   ↓
-判断输入类型
-  ├── URL ─────────→ 下载内容 ──→ 保存临时文件 ──→ 平台安装 ──→ 清理 ──→ 完成
-  │                    ↑                           │
-  │                    └──────── 失败 ──────────────┘
-  │
-  ├── 名称 ─────────→ Cocoloop API 搜索
-  │                      │
-                      成功? ──是──→ 展示结果 ──→ 用户确认 ──→ 下载安装 ──→ 完成
-  │                      │否
-  │                      ↓
-  │              clawhub install
-  │                      │
-                      成功? ──是──→ 完成
-  │                      │否
-  │                      ↓
-  │              GitHub API 搜索
-  │                      │
-                      成功? ──是──→ 展示结果 ──→ 用户确认 ──→ 下载安装 ──→ 完成
-  │                      │否
-  │                      ↓
-  │              返回错误
-  │
-  └── GitHub短链 ───→ 获取仓库信息 ──→ 确认SKILL.md存在 ──→ 下载安装 ──→ 完成
+按已知流程下载文件，或交给 Agent 继续探索
+  ↓
+整理出包含 SKILL.md 的 skill 根目录
+  ↓
+按平台选择目标目录
+  ↓
+复制目录并校验
+  ↓
+完成
 ```
 
-## 详细步骤
+## 第一步：检测当前平台
 
-### 第一步：平台检测
+安装前先判断当前任务更接近哪个 Agent 生态。
+判断顺序：
 
-检测逻辑：
-```
-IF 环境变量 OPENCLAW_HOME 存在 或 /usr/local/openclaw 存在:
-    平台 = OpenClaw
-    安装命令 = "openclaw skills install"
-    安装目录 = ~/.openclaw/skills/
+1. 先看当前工作区里的平台信号
+2. 再看项目配置文件
+3. 最后才看 `HOME` 下的兼容目录
 
-ELSE IF 环境变量 MOLILI_HOME 存在 或 /usr/local/molili 存在:
-    平台 = Molili
-    安装命令 = "molili skills install"
-    安装目录 = ~/.molili/skills/
+这样可以避免同一个 `HOME` 里存在多个 Agent 目录时互相串扰。
 
-ELSE IF 环境变量 CLAUDE_CODE_HOME 存在 或 /usr/local/claude-code 存在:
-    平台 = Claude Code
-    安装命令 = "claude skills install"
-    安装目录 = ~/.claude/skills/
+### Codex
 
-ELSE:
-    平台 = 通用 (clawhub fallback)
-    安装命令 = "npx clawhub@latest install"
-    安装目录 = ~/.claude/skills/ (或 clawhub 默认目录)
-```
+优先信号：
 
-### 第二步：URL 安装流程
+- 仓库里已有 `.agents/skills/`
+- 当前文档和配置明显使用 `AGENTS.md`、`agents/openai.yaml`
+- 如果工作区没有更强信号，再看 `~/.agents/skills/`、`~/.codex/skills/`、`~/.codex/config.toml`
 
-完整流程：
+推荐安装目录：
 
-1. **发送 HTTP GET 请求**
-   - URL: 用户提供的地址
-   - Headers:
-     ```
-     User-Agent: Cocoloop-Skill-Manager/1.0
-     ```
+- 项目级：`.agents/skills/<skill-name>/`
+- 用户级：`~/.agents/skills/<skill-name>/`
+- 兼容目录：`~/.codex/skills/<skill-name>/`
 
-2. **处理响应**
-   - 状态码 200 → 获取内容，进入步骤 3
-   - 状态码 3xx → 从 Location header 获取跳转 URL，递归步骤 1
-   - 其他状态码 → 返回错误
+配置示范：
 
-3. **保存临时文件**
-   - 临时路径: `/tmp/cocoloop-{timestamp}.skill`
-   - 写入下载内容
-
-4. **执行平台安装命令**
-   ```bash
-   {platform.installCmd} /tmp/cocoloop-{timestamp}.skill
-   ```
-
-5. **清理与返回**
-   - 安装成功 → 删除临时文件 → 返回成功
-   - 安装失败 → 保留临时文件（便于调试）→ 返回错误
-
-异常处理：
-
-| 异常情况 | 处理方式 |
-|---------|---------|
-| URL 无法访问 | 返回错误 "无法访问该 URL，请检查网络连接或 URL 是否正确" |
-| 重定向过多 | 返回错误 "该 URL 重定向次数过多，可能存在循环跳转" |
-| 下载内容为空 | 返回错误 "下载内容为空，请检查 URL 是否正确" |
-| 安装命令失败 | 返回错误 "安装失败，临时文件保留在 {path}，可尝试手动安装" |
-
-### 第三步：名称搜索安装流程
-
-#### 3.1 Cocoloop API 搜索
-
-请求：
-```
-GET https://api.cocoloop.cn/search={encoded_query}
+```toml
+[[skills.config]]
+path = "/Users/you/.agents/skills/cocoloop/SKILL.md"
+enabled = false
 ```
 
-成功响应示例：
+### Claude Code
+
+优先信号：
+
+- 仓库里已有 `.claude/skills/`
+- 当前工程使用 `CLAUDE.md` 或 `.claude/settings.json`
+- 如果工作区没有更强信号，再看 `~/.claude/skills/` 或 `~/.claude/settings.json`
+
+推荐安装目录：
+
+- 项目级：`.claude/skills/<skill-name>/`
+- 用户级：`~/.claude/skills/<skill-name>/`
+
+说明：
+
+- Claude Code 的 skill 发现主要依赖目录，不需要额外维护 skill 注册表。
+- 如果团队还要共享额外行为，再配合 `.claude/settings.json`。
+
+### OpenClaw
+
+优先信号：
+
+- 仓库里已有 `skills/` 或 `.agents/skills/`
+- 当前工程使用 `.openclaw/openclaw.json`
+- 如果工作区没有更强信号，再看 `~/.openclaw/skills/`、`~/.agents/skills/`、`~/.openclaw/openclaw.json`
+
+推荐安装目录：
+
+- 项目级：`skills/<skill-name>/` 或 `.agents/skills/<skill-name>/`
+- 用户级：`~/.agents/skills/<skill-name>/` 或 `~/.openclaw/skills/<skill-name>/`
+
+配置示范：
+
 ```json
 {
-  "results": [
-    {
-      "name": "pdf-processor",
-      "description": "PDF processing and manipulation skill",
-      "url": "https://skills.cocoloop.cn/pdf-processor/v1.0.0.skill",
-      "version": "1.0.0",
-      "author": "cocoloop-team",
-      "downloads": 1500,
-      "rating": "S"
+  "skills": {
+    "load": {
+      "extraDirs": [
+        "/Users/you/.agents/skills",
+        "/Users/you/.openclaw/skills"
+      ]
     }
-  ],
-  "total": 1
+  }
 }
 ```
 
-处理：
-- 如果 results.length > 0 → 展示结果，询问用户选择
-- 如果 results.length = 0 或 API 失败 → 进入 3.2
+### Molili
 
-#### 3.2 clawhub Fallback
+优先信号：
 
-执行：
+- 工作目录存在 `.molili/workspaces/default/active_skills/`
+- 如果工作区没有更强信号，再看 `~/.molili/workspaces/default/active_skills/`
+
+推荐安装目录：
+
+- 用户级：macOS / Linux 使用 `~/.molili/workspaces/default/active_skills/<skill-name>/`
+- Windows 使用 `\\.molili\\workspaces\\default\\active_skills\\<skill-name>\\`
+
+说明：
+
+- Molili 当前没有单独的项目级 skill 目录。
+- 已知安装动作就是把 skill 目录移动到 `active_skills`。
+- 这一步可以直接用 Bash 完成。
+
+### OpenCode
+
+优先信号：
+
+- 仓库里已有 `.opencode/skills/`
+- 项目根存在 `opencode.json` 或 `opencode.jsonc`
+- 环境变量存在 `OPENCODE_CONFIG_DIR` 或 `OPENCODE_CONFIG`
+- 用户目录存在 `~/.config/opencode/skills/`
+
+推荐安装目录：
+
+- 项目级：`.opencode/skills/<skill-name>/`
+- 用户级：`~/.config/opencode/skills/<skill-name>/`
+
+说明：
+
+- OpenCode 也会兼容发现 `.claude/skills/` 和 `.agents/skills/`
+- 但当前 Cocoloop 在 OpenCode 环境下优先写 OpenCode 自己的目录
+
+### 目录选择规则
+
+1. 用户说“给当前项目装”时，写项目级目录。
+2. 用户说“以后所有项目都能用”时，写用户级目录。
+3. 如果仓库已经有既定结构，优先沿用现有目录风格。
+4. 如果来源平台自带安装器，先判断它能否装到当前 Agent 真的会读取的位置。
+5. 如果来源里存在多个 skill，先列出候选，不自动替用户选。
+
+补充说明：
+
+1. 如果当前平台不在已知支持列表，CLI 不继续猜，直接 `handoff-to-agent`
+2. 如果来源不属于已知安装流，CLI 也不继续猜，直接 `handoff-to-agent`
+3. Agent 接管后，要先确认这个环境的正确安装目录和正确验证方式，再继续安装
+
+## 第二步：按来源拿到文件
+
+### A. 直接 URL 或本地文件
+
+处理顺序：
+
+1. 用 `curl -L` 下载，或读取本地路径
+2. 识别文件类型
+3. 如果是 zip / tar.gz，解压到临时目录
+4. 查找包含 `SKILL.md` 的根目录
+
+建议命令：
+
 ```bash
-npx clawhub@latest install {skill_name}
+curl -L -o /tmp/cocoloop-skill.zip "https://example.com/skill.zip"
 ```
 
-处理：
-- 成功 → 完成安装
-- 失败（退出码非0）→ 进入 3.3
+### B. Skill 名称
 
-#### 3.3 GitHub API 搜索
+处理顺序固定：
 
-请求：
-```
-GET https://api.github.com/search/repositories?q={query}+filename:SKILL.md&sort=stars&order=desc
-```
+1. 先用 CocoLoop API 搜
+2. 如果官方是模糊命中或返回多个候选，CLI 在这里返回 `review-required`
+3. 只有用户或 Agent 明确指定目标 skill，才继续安装
+4. 如果官方没有明确命中，CLI 在这里停住
+5. 后续由 Agent 继续 ClawHub、skills.sh、GitHub 和公开网页探索
 
-Headers:
-```
-User-Agent: Cocoloop-Skill-Manager/1.0
-```
+#### 1. CocoLoop API
 
-成功响应处理：
-```javascript
-results = data.items
-  .filter(repo => repo.name.includes(query) || repo.description?.includes(query))
-  .map(repo => ({
-    name: repo.name,
-    fullName: repo.full_name,
-    description: repo.description,
-    url: repo.html_url,
-    stars: repo.stargazers_count,
-    owner: {
-      name: repo.owner.login,
-      type: repo.owner.type  // 'User' 或 'Organization'
-    }
-  }))
-  .slice(0, 5)  // 取前5个
+示例：
+
+```bash
+curl -L "https://api.cocoloop.cn/api/v1/store/skills?page=1&page_size=10&keyword=${KEYWORD}&sort=downloads"
 ```
 
-展示格式：
-```
-📋 GitHub 搜索结果 (找到 {total} 个):
+预期结果：
 
-  1. company/pdf-processor ⭐ 1250
-     🏢 Organization | Advanced PDF processing tools
+- skill 文件下载地址
+- 仓库地址
+- 版本、作者、描述等元数据
 
-  2. user/simple-pdf ⭐ 45
-     👤 User | Basic PDF operations
+如果有多个结果，先展示候选，再由 Agent 判断或让用户确认。当前可以用精确 skill 名重试安装。
 
-请选择要安装的 skill (输入序号，或输入 0 取消):
-```
+#### 2. ClawHub
 
-用户选择后：
-1. 获取仓库详情（确认存在 SKILL.md）
-2. 询问用户确认安装
-3. 下载 raw SKILL.md 和相关资源
-4. 打包为 .skill 文件（如果需要）
-5. 执行平台安装
+这里开始已经不是 CLI 自动编排范围，而是 Agent 探索范围。
 
-### 第四步：GitHub 短链安装流程
+优先尝试：
 
-输入格式识别：
-- 包含 `/` 但不以 `http` 开头
-- 格式：`owner/repo` 或 `owner/repo/subpath`
-
-处理流程：
-1. 解析 owner 和 repo
-2. 调用 GitHub API 获取仓库信息：
-   ```
-   GET https://api.github.com/repos/{owner}/{repo}
-   ```
-3. 检查是否存在 SKILL.md：
-   ```
-   GET https://api.github.com/repos/{owner}/{repo}/contents/SKILL.md
-   ```
-4. 如果存在 → 展示仓库信息，询问确认
-5. 下载并安装
-
-### 第五步：安全检查（可选但推荐）
-
-在安装前或安装后，询问用户是否进行安全检查：
-
-```
-⚠️ 安全提醒: 该 skill 来源为 {source_level}，建议进行安全检查。
-是否进行 BSS 安全认证检查? [Y/n]
+```bash
+npx clawhub@latest install <skill-name>
 ```
 
-如果用户选择是：
-1. 执行 [safety-check-guide.md](safety-check-guide.md) 和 [cocoloop-safe-check.md](cocoloop-safe-check.md) 中的检查流程
-2. 生成报告
-3. 如果评级 <= B，询问用户是否继续安装
+如果命令成功：
 
-## 安装后处理
+1. 确认它把 skill 装到了哪里
+2. 判断该目录是否被当前 Agent 平台读取
+3. 如果目录兼容，直接汇报结果
+4. 如果目录不兼容，重新提取文件并手动安装到正确位置
 
-安装完成后，执行：
-1. 验证安装是否成功（检查安装目录）
-2. 如果是更新操作，清理旧版本备份
-3. 可选：显示 skill 使用帮助
-   ```
-   ✅ 安装成功!
+#### 3. skills.sh
 
-   Skill: pdf-processor
-   版本: 1.0.0
-   来源: cocoloop (S级认证)
+优先尝试：
 
-   使用方式:
-   - 转换 PDF: 使用 pdf-processor 转换 xxx.pdf 为 docx
-   - 合并 PDF: 使用 pdf-processor 合并 a.pdf b.pdf
-   ```
+```bash
+npx skills add https://github.com/owner/repo --skill <skill-name>
+```
+
+处理原则：
+
+- 如果 skills.sh 已经给出仓库地址或下载地址，优先拿文件
+- 如果它直接完成安装，继续核对真实写入目录
+- 如果它只兼容某个社区目录，也要向用户说明兼容路径和真实落点
+
+#### 4. GitHub
+
+搜索方向：
+
+- 仓库名包含查询词
+- 仓库中存在 `SKILL.md`
+- 优先组织账号、近期更新、stars 更高的结果
+
+下载方式：
+
+1. 仓库根目录就是 skill 根目录时，可以直接交给 `install`
+2. 如果仓库里有多个 skill，CLI 会先返回 `review-required` 和候选列表
+3. 只有用户或 Agent 明确指定 `--skills` 或 `--all`，才继续安装
+4. 如果需要继续判断子目录、分支或额外结构，由 Agent 继续探索
+5. 当 source 已经明确，再进入统一安装流程
+
+#### 5. 自由探索
+
+当上面都失败时：
+
+1. 搜索公开网页、发布页、文档站
+2. 沿着下载按钮、release 资产、源码链接继续追
+3. 只要拿到 zip、仓库或 skill 目录，就回到统一安装流程
+
+这里的页面解析、链接追踪和结果判断都由 Agent 完成，不由 CLI 自动完成。
+
+## 第三步：标准化 skill 目录
+
+无论文件从哪里来，都整理成一个统一的 skill 根目录。
+
+如果来源中发现多个 `SKILL.md`：
+
+1. 默认不自动挑一个
+2. 先返回候选 skill 名和路径
+3. 用户或 Agent 可重试：
+   - `cocoloop install SOURCE --skills skill-a,skill-b`
+   - `cocoloop install SOURCE --all`
+
+### 根目录必须满足
+
+```text
+skill-name/
+├── SKILL.md
+├── scripts/        可选
+├── references/     可选
+├── assets/         可选
+└── agents/         可选
+```
+
+### 标准化步骤
+
+1. 找到第一个包含 `SKILL.md` 的目录
+2. 读取 frontmatter
+3. 优先使用 frontmatter 里的 `name`
+4. 如果缺少 `name`，退回目录名
+5. 清理无关构建产物，但不要误删脚本和资源
+
+## 第四步：写入目标目录
+
+### 手动落盘安装
+
+推荐做法：
+
+1. 先写临时目录
+2. 再把 skill 内容落到 `~/.cocoloop/skills/<skill-name>/`
+3. 默认把目标平台目录发布成软链接
+4. 平台不支持软链接时，再复制到目标目录
+5. 覆盖前提醒用户
+
+目标路径示例：
+
+```text
+.agents/skills/cocoloop/
+.claude/skills/cocoloop/
+~/.openclaw/skills/cocoloop/
+~/.molili/workspaces/default/active_skills/cocoloop/
+~/.config/opencode/skills/cocoloop/
+```
+
+### 保留目录结构
+
+复制时不要只拿 `SKILL.md`。如果来源里还有下面这些目录，也要一起保留：
+
+- `scripts/`
+- `references/`
+- `assets/`
+- `agents/`
+
+### 覆盖与更新
+
+如果目标目录已存在：
+
+1. 安装请求：先确认是否覆盖
+2. 更新请求：默认按覆盖处理
+3. 如有需要，先创建备份目录
+
+## 第五步：安装后校验
+
+安装结束后至少检查三件事：
+
+1. 目标目录存在
+2. `SKILL.md` 可读
+3. 关键资源目录没有丢失
+
+按平台补充提示：
+
+- Codex：如技能没有立刻出现，提醒用户刷新或重启 Codex
+- Claude Code：如技能没有出现，提醒用户确认目录范围是项目级还是用户级
+- OpenClaw：如技能没有出现，提醒用户检查 `openclaw.json` 的额外扫描目录
+- Molili：如技能没有出现，提醒用户检查 `active_skills` 目录是否为当前 workspace 正在读取的目录
+- OpenCode：如技能没有出现，提醒用户运行 `opencode debug skill` 检查是否被发现
+
+安装完成后，要提醒用户立刻做一次真实调用测试，而不是只看目录存在。
+
+## 异常处理
+
+| 场景 | 处理方式 |
+| --- | --- |
+| URL 失效 | 提示用户检查链接，或继续尝试其他来源 |
+| 压缩包里找不到 `SKILL.md` | 视为无效安装包，继续 fallback |
+| 原生安装器成功但路径不兼容 | 补做一次手动安装到正确目录 |
+| 目标目录无写权限 | 改用用户级目录，或提示用户切换安装范围 |
+| 同名 skill 已存在 | 显示现有路径，询问覆盖还是改名 |
+| 环境不是已知平台 | CLI 直接 `handoff-to-agent` |
+| 来源不属于已知安装流 | CLI 直接 `handoff-to-agent` |
+
+## 推荐汇报格式
+
+安装完成后，建议输出这些信息：
+
+```text
+安装成功
+Skill: cocoloop
+来源: CocoLoop / ClawHub / skills.sh / GitHub / 自由探索
+平台: Codex / Claude Code / OpenClaw
+真实安装路径: /absolute/path/to/skill
+兼容说明: 是否同时写入兼容目录，是否需要刷新客户端
+```
