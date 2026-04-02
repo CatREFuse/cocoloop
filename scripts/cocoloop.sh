@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
+# shellcheck source-path=SCRIPTDIR
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,6 +75,13 @@ cocoloop::show_local_search_results() {
   done <"$results_file"
 
   [[ "$count" -gt 0 ]]
+}
+
+cocoloop::show_fallback_hints() {
+  local query="$1"
+  cocoloop::print_kv "FALLBACK_CLAWHUB" "$(cocoloop_fallback_clawhub_url "$query")"
+  cocoloop::print_kv "FALLBACK_SKILLS_SH" "$(cocoloop_fallback_skills_sh_url "$query")"
+  cocoloop::print_kv "FALLBACK_GITHUB" "$(cocoloop_fallback_github_search_url "$query")"
 }
 
 cocoloop::local_search_has_migration_candidates() {
@@ -181,6 +190,7 @@ cocoloop::command::search() {
 
   if [[ "$official_found" -eq 0 && "$local_found" -eq 0 ]]; then
     cocoloop::print_kv "STATUS" "no-results"
+    cocoloop::show_fallback_hints "$query"
     cocoloop::print_kv "NEXT_STEP" "agent-judgment-or-user-confirmation"
     rm -rf "$search_dir"
     return 0
@@ -236,16 +246,36 @@ cocoloop::command::inspect() {
 
 cocoloop::command::update() {
   local target="$1"
-  local record path source source_type version scope installed_version latest_version payload
-  record="$(cocoloop_session_find_install "$(cocoloop::normalize_name "$target")" 2>/dev/null || true)"
+  local normalized_target record path source source_type version scope installed_version latest_version payload official_id
+  local latest_download search_payload matched_item update_source install_output refresh_record refreshed_path refreshed_version refreshed_scope
+  normalized_target="$(cocoloop::normalize_name "$target")"
+  record="$(cocoloop_session_find_install "$normalized_target" 2>/dev/null || true)"
   [[ -n "$record" ]] || cocoloop::die "not_installed" "未找到已安装记录: $target"
 
-  IFS=$'\t' read -r _ path source source_type version scope _ <<<"$record"
+  IFS=$'\t' read -r _ path source source_type version scope _ official_id <<<"$record"
   installed_version="${version:-unknown}"
+  update_source="$source"
 
   if [[ "$source_type" == "official" ]]; then
-    payload="$(cocoloop_api_search "$target")"
-    latest_version="$(cocoloop::json_get '.data.items[0].version // empty' "$payload" | head -n 1 || true)"
+    if [[ -n "$official_id" ]]; then
+      payload="$(cocoloop_api_inspect_skill_by_id "$official_id" 2>/dev/null || true)"
+      latest_version="$(cocoloop::json_get_first_nonempty "$payload" '.data.version' '.data.latest_version' || true)"
+      latest_download="$(cocoloop::json_get_first_nonempty "$payload" '.data.download_url' || true)"
+
+      search_payload="$(cocoloop_api_search "$target" 2>/dev/null || true)"
+      if [[ -n "$search_payload" ]] && cocoloop::has_jq; then
+        matched_item="$(jq -c --arg id "$official_id" '.data.items[]? | select((.id | tostring) == $id)' <<<"$search_payload" | head -n 1 || true)"
+        if [[ -n "$matched_item" && "$matched_item" != "null" ]]; then
+          [[ -n "$latest_version" ]] || latest_version="$(cocoloop::json_get '.version // .latest_version // empty' "$matched_item" | head -n 1 || true)"
+          [[ -n "$latest_download" ]] || latest_download="$(cocoloop::json_get '.download_url // empty' "$matched_item" | head -n 1 || true)"
+        fi
+      fi
+    else
+      payload="$(cocoloop_api_search "$target")"
+      latest_version="$(cocoloop::json_get '.data.items[0].version // empty' "$payload" | head -n 1 || true)"
+      latest_download="$(cocoloop::json_get '.data.items[0].download_url // empty' "$payload" | head -n 1 || true)"
+    fi
+    [[ -n "$latest_download" ]] && update_source="$latest_download"
   elif [[ -f "${path}/SKILL.md" ]]; then
     latest_version="$(cocoloop::read_skill_version "$path")"
   fi
@@ -263,7 +293,24 @@ cocoloop::command::update() {
   cocoloop::print_kv "TARGET" "$target"
   cocoloop::print_kv "CURRENT_VERSION" "$installed_version"
   [[ -n "$latest_version" ]] && cocoloop::print_kv "LATEST_VERSION" "$latest_version"
-  cocoloop::install::plan "$source" "$scope" "true"
+  [[ -n "$official_id" ]] && cocoloop::print_kv "OFFICIAL_ID" "$official_id"
+  install_output="$(cocoloop::install::plan "$update_source" "$scope" "true")"
+  printf '%s\n' "$install_output"
+
+  if [[ "$source_type" == "official" && -n "$official_id" && "$install_output" == *"STATUS: installed"* ]]; then
+    refresh_record="$(cocoloop_session_find_install "$normalized_target" 2>/dev/null || true)"
+    if [[ -n "$refresh_record" ]]; then
+      IFS=$'\t' read -r _ refreshed_path _ _ refreshed_version refreshed_scope _ _ <<<"$refresh_record"
+      cocoloop_session_record_install \
+        "$normalized_target" \
+        "${refreshed_path:-$path}" \
+        "$update_source" \
+        "official" \
+        "${refreshed_version:-$latest_version}" \
+        "${refreshed_scope:-$scope}" \
+        "$official_id"
+    fi
+  fi
 }
 
 cocoloop::command::update_self() {
@@ -613,19 +660,31 @@ cocoloop::main() {
       cocoloop::parse_single_arg_command update "$@"
       ;;
     update-self)
-      [[ "${1:-}" =~ ^(-h|--help)$ ]] && cocoloop::help::subcommand update-self || cocoloop::command::update_self
+      if [[ "${1:-}" =~ ^(-h|--help)$ ]]; then
+        cocoloop::help::subcommand update-self
+      else
+        cocoloop::command::update_self
+      fi
       ;;
     like)
       cocoloop::parse_like "$@"
       ;;
     like-list)
-      [[ "${1:-}" =~ ^(-h|--help)$ ]] && cocoloop::help::subcommand like-list || cocoloop::command::like_list
+      if [[ "${1:-}" =~ ^(-h|--help)$ ]]; then
+        cocoloop::help::subcommand like-list
+      else
+        cocoloop::command::like_list
+      fi
       ;;
     candidate)
       cocoloop::parse_candidate "$@"
       ;;
     healthcheck)
-      [[ "${1:-}" =~ ^(-h|--help)$ ]] && cocoloop::help::subcommand healthcheck || cocoloop::command::healthcheck
+      if [[ "${1:-}" =~ ^(-h|--help)$ ]]; then
+        cocoloop::help::subcommand healthcheck
+      else
+        cocoloop::command::healthcheck
+      fi
       ;;
     paths)
       cocoloop::parse_paths "$@"

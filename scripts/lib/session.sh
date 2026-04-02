@@ -41,6 +41,7 @@ cocoloop_session_record_install() {
   local source_type="$4"
   local version="$5"
   local scope="$6"
+  local official_id="${7:-}"
   local installs_file
 
   cocoloop_session_init_dirs
@@ -53,17 +54,19 @@ cocoloop_session_record_install() {
   source_type="$(cocoloop::trim_line_endings "$source_type")"
   version="$(cocoloop::trim_line_endings "$version")"
   scope="$(cocoloop::trim_line_endings "$scope")"
+  official_id="$(cocoloop::trim_line_endings "$official_id")"
 
   awk -F '\t' -v skill="$skill_name" '$1 != skill' "$installs_file" >"${installs_file}.tmp" || true
   mv "${installs_file}.tmp" "$installs_file"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$skill_name" \
     "$target_path" \
     "$source" \
     "$source_type" \
     "$version" \
     "$scope" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$installs_file"
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$official_id" >>"$installs_file"
 }
 
 cocoloop_session_find_install() {

@@ -4,6 +4,14 @@ cocoloop::install::temp_dir() {
   mktemp -d "${TMPDIR:-/tmp}/cocoloop-install.XXXXXX"
 }
 
+cocoloop::install::cleanup_work_dir() {
+  local work_dir="${1:-}"
+  [[ -n "$work_dir" ]] || return 0
+  [[ -d "$work_dir" ]] || return 0
+  [[ "${COCOLOOP_KEEP_TMP:-0}" == "1" ]] && return 0
+  rm -rf "$work_dir"
+}
+
 cocoloop::install::last_error_file() {
   printf '%s/install-last-error.log\n' "$(cocoloop_logs_dir)"
 }
@@ -264,7 +272,7 @@ cocoloop::install::prepare_from_url() {
     return 0
   fi
 
-  local filename downloaded extracted_dir next_url
+  local filename downloaded extracted_dir
   filename="$(basename "${url%%\?*}")"
   [[ -n "$filename" ]] || filename="download.bin"
   downloaded="${work_dir}/${filename}"
@@ -425,8 +433,9 @@ cocoloop::install::record_success() {
   local source_type="$4"
   local version="$5"
   local scope="$6"
+  local official_id="${7:-}"
 
-  cocoloop_session_record_install "$skill_name" "$target_path" "$source" "$source_type" "${version:-unknown}" "$scope"
+  cocoloop_session_record_install "$skill_name" "$target_path" "$source" "$source_type" "${version:-unknown}" "$scope" "$official_id"
 }
 
 cocoloop::install::perform_from_root() {
@@ -435,6 +444,7 @@ cocoloop::install::perform_from_root() {
   local source_type="$3"
   local scope="$4"
   local force="$5"
+  local official_id="${6:-}"
   local agent_name skill_name store_path target_path version install_strategy
 
   agent_name="$(cocoloop::platform::detect_agent)"
@@ -451,7 +461,7 @@ cocoloop::install::perform_from_root() {
   else
     cocoloop::install::copy_skill_root "$store_path" "$target_path" "$force" "copy"
   fi
-  cocoloop::install::record_success "$skill_name" "$target_path" "$source_arg" "$source_type" "$version" "$scope"
+  cocoloop::install::record_success "$skill_name" "$target_path" "$source_arg" "$source_type" "$version" "$scope" "$official_id"
 
   cocoloop::print_kv "COMMAND" "install"
   cocoloop::print_kv "STATUS" "installed"
@@ -462,6 +472,7 @@ cocoloop::install::perform_from_root() {
   cocoloop::print_kv "SOURCE_ROOT" "$source_root"
   cocoloop::print_kv "STORE_PATH" "$store_path"
   cocoloop::print_kv "TARGET_PATH" "$target_path"
+  [[ -n "$official_id" ]] && cocoloop::print_kv "OFFICIAL_ID" "$official_id"
   cocoloop::print_kv "INSTALL_STRATEGY" "$install_strategy"
   cocoloop::print_kv "NEXT_STEP" "user-test"
 }
@@ -502,7 +513,11 @@ cocoloop::install::batch_execute() {
       ;;
     url)
       work_dir="$(cocoloop::install::temp_dir)"
-      container_root="$(cocoloop::install::prepare_from_url "$source_arg" "$work_dir")" || return $?
+      container_root="$(cocoloop::install::prepare_from_url "$source_arg" "$work_dir")" || {
+        local prepare_status=$?
+        cocoloop::install::cleanup_work_dir "$work_dir"
+        return "$prepare_status"
+      }
       if roots_output="$(cocoloop::install::selected_roots "$source_arg" "$container_root" "$selected_skills" "$install_all" "multi-skill-source" 2>&1)"; then
         selection_status=0
       else
@@ -510,6 +525,7 @@ cocoloop::install::batch_execute() {
       fi
       if [[ $selection_status -ne 0 ]]; then
         printf '%s\n' "$roots_output"
+        cocoloop::install::cleanup_work_dir "$work_dir"
         return "$selection_status"
       fi
       while IFS= read -r source_root; do
@@ -517,12 +533,23 @@ cocoloop::install::batch_execute() {
         source_roots+=("$source_root")
       done <<<"$roots_output"
       for source_root in "${source_roots[@]}"; do
-        cocoloop::install::perform_from_root "$source_root" "$source_arg" "$input_type" "$scope" "$force"
+        if cocoloop::install::perform_from_root "$source_root" "$source_arg" "$input_type" "$scope" "$force"; then
+          :
+        else
+          local perform_status=$?
+          cocoloop::install::cleanup_work_dir "$work_dir"
+          return "$perform_status"
+        fi
       done
+      cocoloop::install::cleanup_work_dir "$work_dir"
       ;;
     github)
       work_dir="$(cocoloop::install::temp_dir)"
-      container_root="$(cocoloop::install::prepare_from_github "$source_arg" "$work_dir")" || return $?
+      container_root="$(cocoloop::install::prepare_from_github "$source_arg" "$work_dir")" || {
+        local prepare_status=$?
+        cocoloop::install::cleanup_work_dir "$work_dir"
+        return "$prepare_status"
+      }
       if roots_output="$(cocoloop::install::selected_roots "$source_arg" "$container_root" "$selected_skills" "$install_all" "multi-skill-repo" 2>&1)"; then
         selection_status=0
       else
@@ -530,6 +557,7 @@ cocoloop::install::batch_execute() {
       fi
       if [[ $selection_status -ne 0 ]]; then
         printf '%s\n' "$roots_output"
+        cocoloop::install::cleanup_work_dir "$work_dir"
         return "$selection_status"
       fi
       while IFS= read -r source_root; do
@@ -537,8 +565,15 @@ cocoloop::install::batch_execute() {
         source_roots+=("$source_root")
       done <<<"$roots_output"
       for source_root in "${source_roots[@]}"; do
-        cocoloop::install::perform_from_root "$source_root" "$source_arg" "$input_type" "$scope" "$force"
+        if cocoloop::install::perform_from_root "$source_root" "$source_arg" "$input_type" "$scope" "$force"; then
+          :
+        else
+          local perform_status=$?
+          cocoloop::install::cleanup_work_dir "$work_dir"
+          return "$perform_status"
+        fi
       done
+      cocoloop::install::cleanup_work_dir "$work_dir"
       ;;
     skill-name)
       selected_item="$(cocoloop::install::official_selected_item "$source_arg" || true)"
@@ -555,7 +590,11 @@ cocoloop::install::batch_execute() {
       official_name="$(cocoloop::json_get '.name // .original_name // empty' "$selected_item" | head -n 1)"
       [[ -n "$download_url" ]] || return 2
       work_dir="$(cocoloop::install::temp_dir)"
-      container_root="$(cocoloop::install::prepare_from_url "$download_url" "$work_dir")" || return $?
+      container_root="$(cocoloop::install::prepare_from_url "$download_url" "$work_dir")" || {
+        local prepare_status=$?
+        cocoloop::install::cleanup_work_dir "$work_dir"
+        return "$prepare_status"
+      }
       if roots_output="$(cocoloop::install::selected_roots "$official_name" "$container_root" "$selected_skills" "$install_all" "multi-skill-source" 2>&1)"; then
         selection_status=0
       else
@@ -563,12 +602,20 @@ cocoloop::install::batch_execute() {
       fi
       if [[ $selection_status -ne 0 ]]; then
         printf '%s\n' "$roots_output"
+        cocoloop::install::cleanup_work_dir "$work_dir"
         return "$selection_status"
       fi
       source_root="$(printf '%s\n' "$roots_output" | head -n 1)"
-      cocoloop::install::perform_from_root "$source_root" "$download_url" "official" "$scope" "$force"
+      if cocoloop::install::perform_from_root "$source_root" "$download_url" "official" "$scope" "$force" "$official_id"; then
+        :
+      else
+        local perform_status=$?
+        cocoloop::install::cleanup_work_dir "$work_dir"
+        return "$perform_status"
+      fi
       [[ -n "$official_id" ]] && cocoloop_api_behavior_report "$official_id" download skill >/dev/null 2>&1 || true
       [[ -n "$official_name" ]] && cocoloop::print_kv "OFFICIAL_NAME" "$official_name"
+      cocoloop::install::cleanup_work_dir "$work_dir"
       ;;
     *)
       return 3
