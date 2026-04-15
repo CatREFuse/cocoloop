@@ -67,6 +67,22 @@ cocoloop_api_search() {
   cocoloop_api_get "$(cocoloop_api_base_url)/store/skills?page=1&page_size=10&keyword=${encoded}&sort=downloads"
 }
 
+cocoloop_api_featured_skills() {
+  local category="${1:-}"
+  local url
+
+  url="$(cocoloop_api_base_url)/store/featured/skills"
+  if [[ -n "$category" ]]; then
+    url="${url}?category=$(cocoloop_api_urlencode "$category")"
+  fi
+
+  cocoloop_api_get "$url"
+}
+
+cocoloop_api_featured_skill_categories() {
+  cocoloop_api_get "$(cocoloop_api_base_url)/store/featured/skills/categories"
+}
+
 cocoloop_api_inspect_skill_by_id() {
   local skill_id="${1:-}"
   cocoloop_api_get "$(cocoloop_api_base_url)/store/skills/${skill_id}"

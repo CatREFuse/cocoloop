@@ -57,6 +57,43 @@ cocoloop::show_search_results() {
   printf '%s\n' "$payload"
 }
 
+cocoloop::show_featured_skill_results() {
+  local payload="$1"
+  local count=""
+  count="$(cocoloop::json_get '.data | length' "$payload" | head -n 1 || true)"
+
+  if [[ -n "$count" && "$count" == "0" ]]; then
+    return 1
+  fi
+
+  if cocoloop::has_jq; then
+    jq -r '
+      .data[]? |
+      "\((.list_num // "-") | tostring). [\((.skill_id // .id // "-") | tostring)] \(.title // .name // "-") | subtitle=\((.subtitle // "") | if . == "" then "-" else . end) | security=\((.security_level // "") | if . == "" then "-" else . end) | downloads=\((.downloads // "") | if . == "" then "-" else . end) | views=\((.views // "") | if . == "" then "-" else . end) | category=\((.category // "") | if . == "" then "-" else . end)"
+    ' <<<"$payload"
+    return 0
+  fi
+
+  printf '%s\n' "$payload"
+}
+
+cocoloop::show_featured_category_results() {
+  local payload="$1"
+  local count=""
+  count="$(cocoloop::json_get '.data | length' "$payload" | head -n 1 || true)"
+
+  if [[ -n "$count" && "$count" == "0" ]]; then
+    return 1
+  fi
+
+  if cocoloop::has_jq; then
+    jq -r '.data[]? | "- \(.)"' <<<"$payload"
+    return 0
+  fi
+
+  printf '%s\n' "$payload"
+}
+
 cocoloop::show_local_search_results() {
   local results_file="$1"
   local count=0
@@ -228,6 +265,42 @@ cocoloop::command::search() {
   cocoloop::print_kv "STATUS" "review-required"
   cocoloop::print_kv "NEXT_STEP" "agent-judgment-or-user-confirmation"
   rm -rf "$search_dir"
+}
+
+cocoloop::command::featured() {
+  local show_categories="${1:-false}"
+  local category="${2:-}"
+  local payload count=""
+
+  if [[ "$show_categories" == "true" ]]; then
+    payload="$(cocoloop_api_featured_skill_categories 2>/dev/null || printf '{"data":[]}\n')"
+    count="$(cocoloop::json_get '.data | length' "$payload" | head -n 1 || true)"
+    cocoloop::print_kv "COMMAND" "featured"
+    cocoloop::print_kv "VIEW" "categories"
+    [[ -n "$count" ]] && cocoloop::print_kv "COUNT" "$count"
+    printf 'FEATURED_CATEGORIES:\n'
+    if cocoloop::show_featured_category_results "$payload"; then
+      cocoloop::print_kv "STATUS" "success"
+    else
+      printf '  - none\n'
+      cocoloop::print_kv "STATUS" "empty"
+    fi
+    return 0
+  fi
+
+  payload="$(cocoloop_api_featured_skills "$category" 2>/dev/null || printf '{"data":[]}\n')"
+  count="$(cocoloop::json_get '.data | length' "$payload" | head -n 1 || true)"
+  cocoloop::print_kv "COMMAND" "featured"
+  cocoloop::print_kv "VIEW" "skills"
+  [[ -n "$category" ]] && cocoloop::print_kv "CATEGORY" "$category"
+  [[ -n "$count" ]] && cocoloop::print_kv "COUNT" "$count"
+  printf 'FEATURED_SKILLS:\n'
+  if cocoloop::show_featured_skill_results "$payload"; then
+    cocoloop::print_kv "STATUS" "success"
+  else
+    printf '  - none\n'
+    cocoloop::print_kv "STATUS" "empty"
+  fi
 }
 
 cocoloop::command::inspect() {
@@ -447,6 +520,42 @@ cocoloop::parse_query_command() {
   esac
 }
 
+cocoloop::parse_featured() {
+  local show_categories="false"
+  local category=""
+  local category_set="false"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --categories)
+        show_categories="true"
+        shift
+        ;;
+      --category)
+        category_set="true"
+        category="${2:-}"
+        shift 2
+        ;;
+      -h|--help)
+        cocoloop::help::subcommand featured
+        return 0
+        ;;
+      *)
+        cocoloop::die "invalid_argument" "featured 仅支持 --categories 或 --category CATEGORY。"
+        ;;
+    esac
+  done
+
+  if [[ "$show_categories" == "true" && -n "$category" ]]; then
+    cocoloop::die "invalid_argument" "featured 不能同时使用 --categories 和 --category。"
+  fi
+  if [[ "$category_set" == "true" && -z "$category" ]]; then
+    cocoloop::die "missing_argument" "featured 需要 --category CATEGORY。"
+  fi
+
+  cocoloop::command::featured "$show_categories" "$category"
+}
+
 cocoloop::parse_single_arg_command() {
   local command="$1"
   shift
@@ -646,6 +755,9 @@ cocoloop::main() {
       ;;
     search)
       cocoloop::parse_query_command search "$@"
+      ;;
+    featured)
+      cocoloop::parse_featured "$@"
       ;;
     inspect)
       cocoloop::parse_single_arg_command inspect "$@"

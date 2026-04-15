@@ -29,6 +29,9 @@ Cocoloop 的目标很直接：先找到 skill 文件，再把它安装到当前 
 当前可以直接信任 CLI 的动作：
 
 - `cocoloop search --query ...`
+- `cocoloop featured`
+- `cocoloop featured --categories`
+- `cocoloop featured --category ...`
 - `cocoloop inspect ...`
 - `cocoloop paths`
 - `cocoloop healthcheck`
@@ -57,6 +60,36 @@ Cocoloop 的目标很直接：先找到 skill 文件，再把它安装到当前 
 5. 如果 `install` 返回 `handoff-to-agent`，说明 CLI 不该继续猜，Agent 需要自己完成后续探索和安装
 6. 安装完成后，提醒用户立即测试 skill 是否能被当前 Agent 正确发现和调用
 
+### 首次安装 Cocoloop 后的下一步引导
+
+如果刚刚安装完成的是 `cocoloop` 自己，而且用户看起来是第一次在当前 Agent 环境里安装或启用 Cocoloop，不要只停在“请测试是否可用”。
+
+这时追加一步轻量询问：
+
+- 先提醒用户做一次实际调用测试
+- 再询问用户现在要不要看主站热门 skill 推荐
+
+推荐问法：
+
+`如果你愿意，我也可以现在顺手给你看一组主站热门 skill 推荐，帮你继续补齐常用能力。`
+
+如果用户同意，再调用：
+
+- `bash scripts/cocoloop.sh featured`
+- 需要分类时，再调用 `bash scripts/cocoloop.sh featured --categories`
+
+如果用户暂时不需要，不继续主动展开推荐列表。
+
+## 主站精选推荐路由
+
+当用户意图是看主站当前推荐技能，而不是按名字搜索时，优先走独立精选入口：
+
+- 用户想看“主站最新推荐 skill”“精选推荐”“首页推荐 skill”时，调用 `bash scripts/cocoloop.sh featured`
+- 用户想看“推荐分类”“精选分类”时，调用 `bash scripts/cocoloop.sh featured --categories`
+- 用户已经拿到分类名，还想继续看“这个分类下面有哪些精选 skill”时，调用 `bash scripts/cocoloop.sh featured --category "<分类>"`
+
+这个入口只做官方接口 wrapper 和结果展示，不负责替用户做安装判断。需要继续查看详情、比较候选或安装时，再由 Agent 决定是否调用 `inspect`、`search` 或 `install`
+
 ## 平台检测与安装目的地
 
 先判断当前环境更接近哪个 Agent 生态，再选择项目级安装或用户级安装。
@@ -76,7 +109,7 @@ Cocoloop 的目标很直接：先找到 skill 文件，再把它安装到当前 
 3. 如果来源平台自带原生安装器，而且安装目标与当前 Agent 兼容，可以优先使用原生命令。
 4. 如果原生安装器不兼容或无法确认落点，回退到手动落盘安装。
 
-统一落盘规则：
+统一实现规则：
 
 1. 真实 skill 内容默认先写入 `~/.cocoloop/skills/<skill-name>/`
 2. 目标平台目录默认放软链接

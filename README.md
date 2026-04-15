@@ -1,140 +1,130 @@
 # Cocoloop
 
-一个更快速、更安全的 Skill 管理器，用于安装、管理、更新和卸载 Skills。
+一个更快、更稳、更偏安全的 Skill 管理器，用来搜索、下载、安装、更新、卸载和检查 Skills。
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+## 当前命令
 
-## 简介
+- `cocoloop search --query <关键词>`：搜索官方商店和本地已知 Agent 目录
+- `cocoloop featured`：读取主站当前精选推荐技能
+- `cocoloop featured --categories`：读取主站当前精选推荐分类
+- `cocoloop featured --category "<分类>"`：读取指定分类下的精选推荐技能
+- `cocoloop inspect <skill>`：查看技能详情
+- `cocoloop install <skill-or-source>`：安装技能
+- `cocoloop update <skill>`：更新技能
+- `cocoloop uninstall <skill>`：卸载技能
 
-Cocoloop 是一个安全优先的 Skill 管理器，提供比 clawhub 更智能的安装体验和集成 BSS 安全认证。
+## 它解决什么问题
 
-## 功能特性
+很多 Skill 安装流程停在“找到仓库”这一步。Cocoloop 继续往下做两件事：
 
-- **单个 Skill 安装** - 支持 URL、名称搜索、GitHub 等多种来源
-- **批量 Skills 安装** - 依次安装多个 skills
-- **Skill 更新** - 检查并更新到最新版本
-- **Skill 卸载** - 安全卸载已安装的 skills
-- **安全检查** - 集成 BSS 安全认证系统
+1. 先从合适的来源把 skill 文件拿回来。
+2. 再按当前 Agent 平台写到真正会被读取的目录里。
 
-## 安装
+## 当前安装逻辑
 
-```bash
-# 克隆仓库
-git clone https://github.com/CatREFuse/cocoloop.git
-cd cocoloop
-```
+### 搜索顺序
 
-## 使用方法
+1. CocoLoop 搜索 API
+2. ClawHub
+3. skills.sh
+4. GitHub
+5. 自由探索
 
-### 安装单个 Skill
+只要拿到 skill 文件、压缩包或仓库目录，就统一进入同一套安装流程。
 
-```bash
-# 通过名称安装
-cocoloop install pdf-processor
+### 统一安装流程
 
-# 通过 URL 安装
-cocoloop install https://example.com/skill-name.skill
-
-# 通过 GitHub 安装
-cocoloop install owner/repo
-```
-
-### 批量安装 Skills
-
-```bash
-cocoloop install skill1 skill2 skill3
-```
-
-### 更新 Skill
-
-```bash
-cocoloop update pdf-processor
-```
-
-### 卸载 Skill
-
-```bash
-cocoloop uninstall pdf-processor
-```
-
-### 安全检查
-
-```bash
-cocoloop check pdf-processor
-```
-
-## 安全检查系统
-
-Cocoloop 集成了 BSS (Berry Skills Safe) 安全认证检查，评级标准：
-
-- **S+** - 最高安全等级
-- **S** - 优秀
-- **A** - 良好
-- **B** - 一般（需谨慎）
-- **C** - 风险较高
-- **D** - 不建议使用
-
-### 动态代码加载检查
-
-实施最多 2 层的 URL 递归检查，识别隐藏的多层动态加载风险：
-
-- 无动态加载：正常评级流程
-- 仅第 1 层动态加载：根据来源分级处理
-- 存在第 2 层动态加载：最高评级为 C 级
-- 第 2 层后仍有动态加载：强制标记为 C 级
+1. 识别当前 Agent 平台
+2. 获取 skill 文件或 skill 目录
+3. 标准化成包含 `SKILL.md` 的根目录
+4. 按平台选择目标目录
+5. 复制并保留 `scripts/`、`references/`、`assets/`、`agents/`
+6. 校验安装结果
 
 ## 支持的平台
 
-- OpenClaw
-- Molili
-- Claude Code
+| 平台 | 项目级目录 | 用户级目录 | 兼容目录 |
+| --- | --- | --- | --- |
+| Codex | `.agents/skills/` | `~/.agents/skills/` | `~/.codex/skills/` |
+| Claude Code | `.claude/skills/` | `~/.claude/skills/` | 无 |
+| OpenClaw | `skills/` 或 `.agents/skills/` | `~/.agents/skills/` 或 `~/.openclaw/skills/` | `~/.openclaw/skills/` |
+
+## 平台配置示范
+
+### Codex
+
+```toml
+[[skills.config]]
+path = "/Users/you/.agents/skills/cocoloop/SKILL.md"
+enabled = false
+```
+
+### OpenClaw
+
+```json
+{
+  "skills": {
+    "load": {
+      "extraDirs": [
+        "/Users/you/.agents/skills",
+        "/Users/you/.openclaw/skills"
+      ]
+    }
+  }
+}
+```
+
+Claude Code 的 skill 发现主要依赖目录本身，常见做法是直接写入 `.claude/skills/` 或 `~/.claude/skills/`，需要共享额外设置时再配合 `.claude/settings.json`。
+
+## 搜索来源示范
+
+### CocoLoop API
+
+```bash
+curl -L "https://api.cocoloop.com/api/v1/store/skills?page=1&page_size=10&keyword=rsshub&sort=downloads"
+```
+
+### 主站精选推荐
+
+```bash
+bash scripts/cocoloop.sh featured
+bash scripts/cocoloop.sh featured --categories
+bash scripts/cocoloop.sh featured --category "技术开发"
+```
+
+这个入口只负责读取主站最新精选推荐、分类列表和指定分类下的精选技能。后续是否查看详情、比较候选或继续安装，仍由 Agent 决定。
+
+### ClawHub
+
+```bash
+npx clawhub@latest install rsshub
+```
+
+### skills.sh
+
+```bash
+npx skills add https://github.com/owner/repo --skill rsshub
+```
+
+这些原生命令只在它们和当前 Agent 平台兼容时优先使用。否则还是回到 Cocoloop 的标准化落盘流程。
+
+## 安全检查
+
+Cocoloop 集成了 CLS 风格的安全检查流程，评级标准为 `S+ / S / A / B / C / D`。
+
+重点检查：
+
+- 危险代码执行
+- 敏感信息处理
+- 动态下载与动态执行
+- 多层 URL 加载
+- 来源可信度
 
 ## 文档
 
+- [Skill 定义文件](SKILL.md)
 - [安装流程指南](references/install-guide.md)
 - [搜索流程指南](references/search-guide.md)
 - [卸载流程指南](references/uninstall-guide.md)
 - [安全检查流程指南](references/safety-check-guide.md)
 - [Cocoloop Safe Check 标准](references/cocoloop-safe-check.md)
-
-## 工作流程
-
-### Skill 安装流程
-
-1. **平台检测** - 确定当前运行环境和安装方式
-2. **来源识别** - 支持直接 URL、Skill 名称、GitHub 短链接
-3. **搜索与下载** - 从 Cocoloop API、clawhub 或 GitHub 获取
-4. **安全检查** - BSS 安全认证检查
-5. **安装执行** - 安装到对应平台的 skill 目录
-
-### 搜索优先级
-
-1. Cocoloop API 搜索
-2. Fallback 到 clawhub
-3. Fallback 到 GitHub 搜索
-
-## 项目结构
-
-```
-cocoloop/
-├── SKILL.md                      # Skill 定义文件
-├── README.md                     # 项目说明文档
-└── references/                   # 详细指南文档
-    ├── install-guide.md          # 安装流程指南
-    ├── search-guide.md           # 搜索流程指南
-    ├── uninstall-guide.md        # 卸载流程指南
-    ├── safety-check-guide.md     # 安全检查流程指南
-    └── cocoloop-safe-check.md    # 安全检查标准
-```
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 许可证
-
-[MIT](LICENSE)
-
----
-
-Made with ❤️ by Cocoloop Team

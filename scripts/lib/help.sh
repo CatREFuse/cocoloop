@@ -9,6 +9,7 @@ Cocoloop CLI
 
 主命令:
   search        搜索技能
+  featured      查看主站精选推荐
   inspect       查看技能详情
   install       安装技能
   uninstall     卸载技能
@@ -39,6 +40,17 @@ cocoloop::help::subcommand() {
   search 会同时执行官方搜索和本地已知 Agent 目录搜索，再汇总输出。
   当前版本默认把候选结果视为待 Agent 判断或待用户确认，不直接把列表当成可信命中。
   如果本地已知 Agent 里已经存在同名或相近 Skill，会提示用户是否移植到当前环境。
+HELP
+      ;;
+    featured)
+      cat <<'HELP'
+用法: cocoloop featured [--categories | --category CATEGORY]
+
+说明:
+  featured 默认读取主站当前精选技能列表。
+  传入 --categories 时，读取主站当前精选技能分类列表。
+  传入 --category CATEGORY 时，只读取该分类下的精选技能列表。
+  这个命令只负责官方接口取数和展示，不替 Agent 做安装或选择判断。
 HELP
       ;;
     inspect)
