@@ -37,6 +37,54 @@ cocoloop::read_skill_version() {
   cocoloop::trim_line_endings "$(sed -nE 's/^version:[[:space:]]*"?([^"]+)"?/\1/p' "${skill_root}/SKILL.md" | head -n 1)"
 }
 
+cocoloop::current_version() {
+  cocoloop::trim_line_endings "$(sed -nE 's/^version:[[:space:]]*"?([^"]+)"?/\1/p' "$SCRIPT_DIR/../SKILL.md" | head -n 1)"
+}
+
+cocoloop::today_utc_date() {
+  printf '%s\n' "${COCOLOOP_AUTO_UPDATE_CHECK_TODAY:-$(date -u +%Y-%m-%d)}"
+}
+
+cocoloop::auto_update_check_payload() {
+  if [[ -n "${COCOLOOP_AUTO_UPDATE_CHECK_MOCK_RESPONSE:-}" ]]; then
+    printf '%s\n' "$COCOLOOP_AUTO_UPDATE_CHECK_MOCK_RESPONSE"
+    return 0
+  fi
+
+  cocoloop_api_check_upgrade "$1" "$2"
+}
+
+cocoloop::maybe_run_daily_update_check() {
+  local command="$1"
+  local today last_check current_version payload need_upgrade latest_version download_url
+
+  [[ "${COCOLOOP_SKIP_AUTO_UPDATE_CHECK:-0}" == "1" ]] && return 0
+  [[ "$command" == "update-self" ]] && return 0
+
+  today="$(cocoloop::today_utc_date)"
+  last_check="$(cocoloop_session_last_update_check_date 2>/dev/null || true)"
+  [[ -n "$today" && "$last_check" == "$today" ]] && return 0
+
+  current_version="$(cocoloop::current_version)"
+  payload="$(cocoloop::auto_update_check_payload "${current_version:-0.0.0}" "$(cocoloop::platform::detect_os)" 2>/dev/null || true)"
+  cocoloop_session_record_update_check "$today" "${current_version:-0.0.0}"
+
+  [[ -n "$payload" ]] || return 0
+  need_upgrade="$(cocoloop::json_get_first_nonempty "$payload" '.data.need_upgrade' || true)"
+  [[ "$need_upgrade" == "true" ]] || return 0
+
+  latest_version="$(cocoloop::json_get_first_nonempty "$payload" '.data.latest_version' || true)"
+  download_url="$(cocoloop::json_get_first_nonempty "$payload" '.data.download_url' || true)"
+
+  printf 'NOTICE: Cocoloop 发现新版本 %s（当前 %s）。运行 `cocoloop update-self` 查看详情' \
+    "${latest_version:-unknown}" \
+    "${current_version:-unknown}"
+  if [[ -n "$download_url" ]]; then
+    printf '，下载地址: %s' "$download_url"
+  fi
+  printf '\n'
+}
+
 cocoloop::show_search_results() {
   local payload="$1"
   local count=""
@@ -388,7 +436,7 @@ cocoloop::command::update() {
 
 cocoloop::command::update_self() {
   local current_version
-  current_version="$(sed -nE 's/^version:[[:space:]]*([0-9.]+).*/\1/p' "$SCRIPT_DIR/../SKILL.md" | head -n 1)"
+  current_version="$(cocoloop::current_version)"
   cocoloop::print_json_or_raw "$(cocoloop_api_check_upgrade "${current_version:-0.0.0}" "$(cocoloop::platform::detect_os)")"
 }
 
@@ -748,6 +796,8 @@ cocoloop::parse_paths() {
 cocoloop::main() {
   local command="${1:-help}"
   shift || true
+
+  cocoloop::maybe_run_daily_update_check "$command"
 
   case "$command" in
     help|-h|--help)

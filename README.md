@@ -108,6 +108,13 @@ npx skills add https://github.com/owner/repo --skill rsshub
 
 这些原生命令只在它们和当前 Agent 平台兼容时优先使用。否则还是回到 Cocoloop 的标准化落盘流程。
 
+## 启动自检
+
+Cocoloop 会在每天第一次启动时静默执行一次升级检查。
+
+如果当前已经有更新版本，CLI 会在正常输出前提示最新版本和下载地址。
+如果当天已经检查过，或者当前没有更新，就不额外打扰。
+
 ## 安全检查
 
 Cocoloop 集成了 CLS 风格的安全检查流程，评级标准为 `S+ / S / A / B / C / D`。

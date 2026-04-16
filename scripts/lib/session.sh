@@ -30,6 +30,10 @@ cocoloop_likes_file() {
   printf '%s/likes.txt\n' "$(cocoloop_data_dir)"
 }
 
+cocoloop_update_check_file() {
+  printf '%s/update-check.tsv\n' "$(cocoloop_data_dir)"
+}
+
 cocoloop_session_init_dirs() {
   mkdir -p "$(cocoloop_cache_dir)" "$(cocoloop_logs_dir)" "$(cocoloop_data_dir)" "$(cocoloop_skills_store_dir)"
 }
@@ -113,4 +117,24 @@ cocoloop_session_list_likes() {
   likes_file="$(cocoloop_likes_file)"
   [[ -f "$likes_file" ]] || return 0
   cat "$likes_file"
+}
+
+cocoloop_session_last_update_check_date() {
+  local check_file
+  check_file="$(cocoloop_update_check_file)"
+  [[ -f "$check_file" ]] || return 1
+  awk -F '\t' 'NF { print $1; exit }' "$check_file"
+}
+
+cocoloop_session_record_update_check() {
+  local check_date="$1"
+  local current_version="${2:-}"
+  local check_file
+
+  cocoloop_session_init_dirs
+  check_file="$(cocoloop_update_check_file)"
+  printf '%s\t%s\t%s\n' \
+    "$check_date" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$current_version" >"$check_file"
 }

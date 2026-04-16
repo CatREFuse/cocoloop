@@ -39,6 +39,7 @@ Cocoloop 的目标很直接：先找到 skill 文件，再把它安装到当前 
 - `cocoloop install ...`
 - `cocoloop uninstall ...`
 - `cocoloop update ...`
+- `cocoloop update-self`
 
 ### Agent 负责粘合
 
@@ -59,6 +60,19 @@ Cocoloop 的目标很直接：先找到 skill 文件，再把它安装到当前 
 4. 当 Agent 已经拿到明确 source，再决定要不要调用 `install`
 5. 如果 `install` 返回 `handoff-to-agent`，说明 CLI 不该继续猜，Agent 需要自己完成后续探索和安装
 6. 安装完成后，提醒用户立即测试 skill 是否能被当前 Agent 正确发现和调用
+
+## 每日升级自检
+
+`cocoloop` CLI 会在每天第一次启动时静默执行一次升级检查。
+
+处理规则：
+
+- 默认不需要 Agent 主动触发
+- 如果当天已经检查过，不重复检查
+- 如果检查结果显示有新版本，CLI 会在正常命令输出前打印一条升级提示
+- 如果没有新版本、网络失败或接口暂时不可用，保持静默，不影响当前命令继续执行
+
+如果用户看到升级提示，并明确想看详情或确认当前版本状态，再调用 `bash scripts/cocoloop.sh update-self`
 
 ### 首次安装 Cocoloop 后的下一步引导
 
